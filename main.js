@@ -388,7 +388,27 @@ var shaderProgram;
     shaderProgram.pointLightingLocationUniform = gl.getUniformLocation(shaderProgram, "uPointLightingLocation");
     shaderProgram.pointLightingColorUniform = gl.getUniformLocation(shaderProgram, "uPointLightingColor");
   }
-
+  var SIZE_BANK = 100;
+  var snareBank = [];
+  for(var i=0; i<SIZE_BANK; i++){
+    snareBank.push(new Audio("snare.wav"));
+  }
+  var bassBank = [];
+  for(var i=0; i<SIZE_BANK; i++){
+    bassBank.push(new Audio("bassdrum.wav"));
+  }
+  var hihatBank = [];
+  for(var i=0; i<SIZE_BANK; i++){
+    hihatBank.push(new Audio("hihat.wav"));
+  }
+  var cymbalBank = [];
+  for(var i=0; i<SIZE_BANK; i++){
+    cymbalBank.push(new Audio("cymbal.wav"));
+  }
+  var snarePos = 0;
+  var bassPos = 0;
+  var hihatPos = 0;
+  var cymbalPos = 0;
   document.onkeydown = function(e) {
     if (e.which == ' '.charCodeAt(0)) paused = !paused;
     else if (e.which == 'G'.charCodeAt(0)) useSpherePhysics = !useSpherePhysics;    
@@ -397,8 +417,8 @@ var shaderProgram;
     else if (e.which == 'A'.charCodeAt(0)) {
       //add drop to particular region 
       //water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
-      var audio = new Audio('snare.wav');
-      audio.play();
+      snareBank[snarePos].play();
+      snarePos = (snarePos+1)%SIZE_BANK;
       water.addDrop(0.8, 0.8, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
       //move sphere a little bit for some action
       center.y += Math.random()*0.003;
@@ -421,8 +441,8 @@ var shaderProgram;
     else if (e.which == 'S'.charCodeAt(0)) {
       //add drop to particular region 
       //water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
-      var audio = new Audio('bassdrum.wav');
-      audio.play();
+      bassBank[bassPos].play();
+      bassPos = (bassPos+1)%SIZE_BANK;
       water.addDrop(-0.8, 0.8, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
       //move sphere a little bit for some action
       center.y += Math.random()*0.003;
@@ -440,8 +460,8 @@ var shaderProgram;
     else if (e.which == 'X'.charCodeAt(0)) {
       //add drop to particular region 
       //water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
-      var audio = new Audio('hihat.wav');
-      audio.play();
+      hihatBank[hihatPos].play();
+      hihatPos = (hihatPos+1)%SIZE_BANK;
       water.addDrop(-0.8, -0.8, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
       //move sphere a little bit for some action
       center.y += Math.random()*0.003;
@@ -459,8 +479,8 @@ var shaderProgram;
     else if (e.which == 'Z'.charCodeAt(0)) {
       //add drop to particular region 
       //water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
-      var audio = new Audio('cymbal.wav');
-      audio.play();
+      cymbalBank[cymbalPos].play();
+      cymbalPos = (cymbalPos+1)%SIZE_BANK;
       water.addDrop(0.8, -0.8, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
       //move sphere a little bit for some action
       center.y += Math.random()*0.003;
