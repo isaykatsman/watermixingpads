@@ -4,6 +4,8 @@
  *
  * Copyright 2011 Evan Wallace
  * Released under the MIT license
+ *
+ * Modified for WP GL by Isay Katsman
  */
 
 function text2html(text) {
@@ -82,9 +84,10 @@ window.onload = function() {
   gravity = new GL.Vector(0, -4, 0);
   radius = 0.25;
 
-  for (var i = 0; i < 20; i++) {
+  //adding random drops, this is what should do when press a key or something for beat
+  /*for (var i = 0; i < 20; i++) {
     water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (i & 1) ? 0.01 : -0.01);
-  }
+  }*/
 
   document.getElementById('loading').innerHTML = '';
   onresize();
@@ -220,6 +223,9 @@ window.onload = function() {
     if (e.which == ' '.charCodeAt(0)) paused = !paused;
     else if (e.which == 'G'.charCodeAt(0)) useSpherePhysics = !useSpherePhysics;
     else if (e.which == 'L'.charCodeAt(0) && paused) draw();
+    else if (e.which == 'A'.charCodeAt(0)) {
+
+    }
   };
 
   var frame = 0;
