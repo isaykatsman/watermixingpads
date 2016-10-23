@@ -12,6 +12,102 @@ function text2html(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
 }
 
+var helperFunctions = '\
+  const float IOR_AIR = 1.0;\
+  const float IOR_WATER = 1.333;\
+  const vec3 abovewaterColor = vec3(0.25, 1.0, 1.25);\
+  const vec3 underwaterColor = vec3(0.4, 0.9, 1.0);\
+  const float poolHeight = 1.0;\
+  uniform vec3 light;\
+  uniform vec3 sphereCenter;\
+  uniform float sphereRadius;\
+  uniform sampler2D tiles;\
+  uniform sampler2D causticTex;\
+  uniform sampler2D water;\
+  \
+  vec2 intersectCube(vec3 origin, vec3 ray, vec3 cubeMin, vec3 cubeMax) {\
+    vec3 tMin = (cubeMin - origin) / ray;\
+    vec3 tMax = (cubeMax - origin) / ray;\
+    vec3 t1 = min(tMin, tMax);\
+    vec3 t2 = max(tMin, tMax);\
+    float tNear = max(max(t1.x, t1.y), t1.z);\
+    float tFar = min(min(t2.x, t2.y), t2.z);\
+    return vec2(tNear, tFar);\
+  }\
+  \
+  float intersectSphere(vec3 origin, vec3 ray, vec3 sphereCenter, float sphereRadius) {\
+    vec3 toSphere = origin - sphereCenter;\
+    float a = dot(ray, ray);\
+    float b = 2.0 * dot(toSphere, ray);\
+    float c = dot(toSphere, toSphere) - sphereRadius * sphereRadius;\
+    float discriminant = b*b - 4.0*a*c;\
+    if (discriminant > 0.0) {\
+      float t = (-b - sqrt(discriminant)) / (2.0 * a);\
+      if (t > 0.0) return t;\
+    }\
+    return 1.0e6;\
+  }\
+  \
+  vec3 getSphereColor(vec3 point) {\
+    vec3 color = vec3(0.5);\
+    \
+    /* ambient occlusion with walls */\
+    color *= 1.0 - 0.9 / pow((1.0 + sphereRadius - abs(point.x)) / sphereRadius, 3.0);\
+    color *= 1.0 - 0.9 / pow((1.0 + sphereRadius - abs(point.z)) / sphereRadius, 3.0);\
+    color *= 1.0 - 0.9 / pow((point.y + 1.0 + sphereRadius) / sphereRadius, 3.0);\
+    \
+    /* caustics */\
+    vec3 sphereNormal = (point - sphereCenter) / sphereRadius;\
+    vec3 refractedLight = refract(-light, vec3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);\
+    float diffuse = max(0.0, dot(-refractedLight, sphereNormal)) * 0.5;\
+    vec4 info = texture2D(water, point.xz * 0.5 + 0.5);\
+    if (point.y < info.r) {\
+      vec4 caustic = texture2D(causticTex, 0.75 * (point.xz - point.y * refractedLight.xz / refractedLight.y) * 0.5 + 0.5);\
+      diffuse *= caustic.r * 4.0;\
+    }\
+    color += diffuse;\
+    \
+    return color;\
+  }\
+  \
+  vec3 getWallColor(vec3 point) {\
+    float scale = 0.5;\
+    \
+    vec3 wallColor;\
+    vec3 normal;\
+    if (abs(point.x) > 0.999) {\
+      wallColor = texture2D(tiles, point.yz * 0.5 + vec2(1.0, 0.5)).rgb;\
+      normal = vec3(-point.x, 0.0, 0.0);\
+    } else if (abs(point.z) > 0.999) {\
+      wallColor = texture2D(tiles, point.yx * 0.5 + vec2(1.0, 0.5)).rgb;\
+      normal = vec3(0.0, 0.0, -point.z);\
+    } else {\
+      wallColor = texture2D(tiles, point.xz * 0.5 + 0.5).rgb;\
+      normal = vec3(0.0, 1.0, 0.0);\
+    }\
+    \
+    scale /= length(point); /* pool ambient occlusion */\
+    scale *= 1.0 - 0.9 / pow(length(point - sphereCenter) / sphereRadius, 4.0); /* sphere ambient occlusion */\
+    \
+    /* caustics */\
+    vec3 refractedLight = -refract(-light, vec3(0.0, 1.0, 0.0), IOR_AIR / IOR_WATER);\
+    float diffuse = max(0.0, dot(refractedLight, normal));\
+    vec4 info = texture2D(water, point.xz * 0.5 + 0.5);\
+    if (point.y < info.r) {\
+      vec4 caustic = texture2D(causticTex, 0.75 * (point.xz - point.y * refractedLight.xz / refractedLight.y) * 0.5 + 0.5);\
+      scale += diffuse * caustic.r * 2.0 * caustic.g;\
+    } else {\
+      /* shadow for the rim of the pool */\
+      vec2 t = intersectCube(point, refractedLight, vec3(-1.0, -poolHeight, -1.0), vec3(1.0, 2.0, 1.0));\
+      diffuse *= 1.0 / (1.0 + exp(-200.0 / (1.0 + 10.0 * (t.y - t.x)) * (point.y + refractedLight.y * t.y - 2.0 / 12.0)));\
+      \
+      scale += diffuse * 0.5;\
+    }\
+    \
+    return wallColor * scale;\
+  }\
+';
+
 function handleError(text) {
   var html = text2html(text);
   if (html == 'WebGL not supported') {
@@ -34,18 +130,22 @@ var angleX = -25;
 var angleY = -200.5;
 
 // Sphere physics info
-var useSpherePhysics = false;
+var useSpherePhysics = true;
+var moveCamera = false;
 var center;
 var oldCenter;
 var velocity;
 var gravity;
 var radius;
+var colorR=0;
+var colorG=0.4;
+var colorB=0.9;
 var paused = false;
 
 window.onload = function() {
   var ratio = window.devicePixelRatio || 1;
   var help = document.getElementById('help');
-
+  //initShaders();
   function onresize() {
     var width = innerWidth - help.clientWidth - 20;
     var height = innerHeight;
@@ -62,7 +162,7 @@ window.onload = function() {
   }
 
   document.body.appendChild(gl.canvas);
-  gl.clearColor(0, 0, 0, 1);
+  gl.clearColor(0, 0, 0, 0.1);
 
   water = new Water();
   renderer = new Renderer();
@@ -79,7 +179,7 @@ window.onload = function() {
     throw new Error('Rendering to floating-point textures is required but not supported');
   }
 
-  center = oldCenter = new GL.Vector(-0.4, -0.75, 0.2);
+  center = oldCenter = new GL.Vector(0, -0.2, 0);
   velocity = new GL.Vector();
   gravity = new GL.Vector(0, -4, 0);
   radius = 0.25;
@@ -219,12 +319,161 @@ window.onload = function() {
     }
   };
 
+function getShader(gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+
+var shaderProgram;
+
+  function initShaders() {
+    var fragmentShader = getShader(gl, "shader-fs");
+    var vertexShader = getShader(gl, "shader-vs");
+    shaderProgram = gl.createProgram();
+    gl.attachShader(shaderProgram, vertexShader);
+    gl.attachShader(shaderProgram, fragmentShader);
+    gl.linkProgram(shaderProgram);
+
+    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+        alert("Could not initialise shaders");
+    }
+
+    gl.useProgram(shaderProgram);
+
+    shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+    gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+    shaderProgram.textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
+    gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+
+    shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+    gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+    shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+    shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+    shaderProgram.nMatrixUniform = gl.getUniformLocation(shaderProgram, "uNMatrix");
+    shaderProgram.samplerUniform = gl.getUniformLocation(shaderProgram, "uSampler");
+    shaderProgram.useLightingUniform = gl.getUniformLocation(shaderProgram, "uUseLighting");
+    shaderProgram.ambientColorUniform = gl.getUniformLocation(shaderProgram, "uAmbientColor");
+    shaderProgram.pointLightingLocationUniform = gl.getUniformLocation(shaderProgram, "uPointLightingLocation");
+    shaderProgram.pointLightingColorUniform = gl.getUniformLocation(shaderProgram, "uPointLightingColor");
+  }
+
   document.onkeydown = function(e) {
     if (e.which == ' '.charCodeAt(0)) paused = !paused;
-    else if (e.which == 'G'.charCodeAt(0)) useSpherePhysics = !useSpherePhysics;
+    else if (e.which == 'G'.charCodeAt(0)) useSpherePhysics = !useSpherePhysics;    
+    else if (e.which == 'C'.charCodeAt(0)) moveCamera = !moveCamera;
     else if (e.which == 'L'.charCodeAt(0) && paused) draw();
     else if (e.which == 'A'.charCodeAt(0)) {
+      //add drop to particular region 
+      //water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
+      var audio = new Audio('snare.wav');
+      audio.play();
+      water.addDrop(0.8, 0.8, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
+      //move sphere a little bit for some action
+      center.y += Math.random()*0.003;
+      if(moveCamera) {
+        startDrag(center.x,center.y);
+        duringDrag(center.x+(Math.random()*2-1)*5,center.y+(Math.random()*2-1)*5);
+        //stopDrag();
+      } 
 
+      //color change of sphere
+      colorR = Math.max(0,Math.min(255,colorR+(Math.random()*2-1)*0.1));
+      colorG = Math.max(0,Math.min(255,colorG+(Math.random()*2-1)*0.1));
+      colorB = Math.max(0,Math.min(255,colorB+(Math.random()*2-1)*0.1));
+
+      //if too regular then randomize
+      if(colorR > 0.8 && colorG > 0.8 & colorB > 0.8) {
+        //colorR = Math.random();
+      } 
+    }
+    else if (e.which == 'S'.charCodeAt(0)) {
+      //add drop to particular region 
+      //water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
+      var audio = new Audio('bassdrum.wav');
+      audio.play();
+      water.addDrop(-0.8, 0.8, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
+      //move sphere a little bit for some action
+      center.y += Math.random()*0.003;
+      if(moveCamera) {
+        startDrag(center.x,center.y);
+        duringDrag(center.x+(Math.random()*2-1)*5,center.y+(Math.random()*2-1)*5);
+        stopDrag();
+      } 
+
+            //color change of sphere
+      colorR = Math.max(0,Math.min(255,colorR+(Math.random()*2-1)*0.1));
+      colorG = Math.max(0,Math.min(255,colorG+(Math.random()*2-1)*0.1));
+      colorB = Math.max(0,Math.min(255,colorB+(Math.random()*2-1)*0.1));
+    }
+    else if (e.which == 'X'.charCodeAt(0)) {
+      //add drop to particular region 
+      //water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
+      var audio = new Audio('hihat.wav');
+      audio.play();
+      water.addDrop(-0.8, -0.8, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
+      //move sphere a little bit for some action
+      center.y += Math.random()*0.003;
+      if(moveCamera) {
+        startDrag(center.x,center.y);
+        duringDrag(center.x+(Math.random()*2-1)*5,center.y+(Math.random()*2-1)*5);
+        stopDrag();
+      } 
+
+            //color change of sphere
+      colorR = Math.max(0,Math.min(255,colorR+(Math.random()*2-1)*0.1));
+      colorG = Math.max(0,Math.min(255,colorG+(Math.random()*2-1)*0.1));
+      colorB = Math.max(0,Math.min(255,colorB+(Math.random()*2-1)*0.1));
+    }
+    else if (e.which == 'Z'.charCodeAt(0)) {
+      //add drop to particular region 
+      //water.addDrop(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
+      var audio = new Audio('cymbal.wav');
+      audio.play();
+      water.addDrop(0.8, -0.8, 0.03, (Math.random() > 0.5) ? 0.01 : -0.01);
+      //move sphere a little bit for some action
+      center.y += Math.random()*0.003;
+      if(moveCamera) {
+        startDrag(center.x,center.y);
+        duringDrag(center.x+(Math.random()*2-1)*5,center.y+(Math.random()*2-1)*5);
+        stopDrag();
+      } 
+
+            //color change of sphere
+      colorR = Math.max(0,Math.min(255,colorR+(Math.random()*2-1)*0.1));
+      colorG = Math.max(0,Math.min(255,colorG+(Math.random()*2-1)*0.1));
+      colorB = Math.max(0,Math.min(255,colorB+(Math.random()*2-1)*0.1));
     }
   };
 
@@ -276,9 +525,41 @@ window.onload = function() {
     gl.rotate(-angleY, 0, 1, 0);
     gl.translate(0, 0.5, 0);
 
+      /*gl.uniform3f(
+        shaderProgram.pointLightingLocationUniform,
+        0,
+        0,
+        0
+      );
+
+      gl.uniform3f(
+        shaderProgram.pointLightingColorUniform,
+        1,
+        0,
+        0
+      );*/
+
     gl.enable(gl.DEPTH_TEST);
     renderer.sphereCenter = center;
     renderer.sphereRadius = radius;
+    renderer.sphereShader = new GL.Shader(helperFunctions + '\
+    varying vec3 position;\
+    void main() {\
+      position = sphereCenter + gl_Vertex.xyz * sphereRadius;\
+      gl_Position = gl_ModelViewProjectionMatrix * vec4(position, 1.0);\
+    }\
+  ', helperFunctions + '\
+    varying vec3 position;\
+    void main() {\
+      gl_FragColor = vec4(' + 'vec3(' + colorR + ',' + colorG + ',' + colorB + ')' + ', 1.0);\
+      vec4 info = texture2D(water, position.xz * 0.5 + 0.5);\
+      if (position.y < info.r) {\
+        gl_FragColor.rgb *= vec3(0.4, 0.9, 1.0) * 1.2;\
+      }\
+    }\
+  ');
+    //top color: getSphereColor(position)
+    //underwater color: vec3(0.4, 0.9, 1.0)
     renderer.renderCube();
     renderer.renderWater(water, cubemap);
     renderer.renderSphere();
